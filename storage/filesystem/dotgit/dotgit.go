@@ -661,6 +661,12 @@ func (d *DotGit) readReferenceFrom(rd io.Reader, name string) (ref *plumbing.Ref
 		return nil, err
 	}
 
+	if len(b) == 0 {
+		// This may happen if the reference is being read from a newly created file.
+		// In that case, try getting the reference from the packed refs file.
+		return d.packedRef(plumbing.ReferenceName(name))
+	}
+
 	line := strings.TrimSpace(string(b))
 	return plumbing.NewReferenceFromStrings(name, line), nil
 }
