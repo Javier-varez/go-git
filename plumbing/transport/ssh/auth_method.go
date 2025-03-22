@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
@@ -230,11 +231,11 @@ func (a *PublicKeysCallback) ClientConfig() (*ssh.ClientConfig, error) {
 //	~/.ssh/known_hosts
 //	/etc/ssh/ssh_known_hosts
 func NewKnownHostsCallback(files ...string) (ssh.HostKeyCallback, error) {
-	kh, err := newKnownHosts(files...)
-	return ssh.HostKeyCallback(kh), err
+	db, err := newKnownHostsDb(files...)
+	return db.HostKeyCallback(), err
 }
 
-func newKnownHosts(files ...string) (knownhosts.HostKeyCallback, error) {
+func newKnownHostsDb(files ...string) (*knownhosts.HostKeyDB, error) {
 	var err error
 
 	if len(files) == 0 {
@@ -247,7 +248,8 @@ func newKnownHosts(files ...string) (knownhosts.HostKeyCallback, error) {
 		return nil, err
 	}
 
-	return knownhosts.New(files...)
+	fmt.Println("files", strings.Join(files, ","))
+	return knownhosts.NewDB(files...)
 }
 
 func getDefaultKnownHostsFiles() ([]string, error) {

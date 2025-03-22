@@ -126,18 +126,33 @@ func (c *command) connect() error {
 		return err
 	}
 	hostWithPort := c.getHostWithPort()
+	fmt.Println("host port ", hostWithPort)
 	if config.HostKeyCallback == nil {
-		kh, err := newKnownHosts()
+		db, err := newKnownHostsDb()
 		if err != nil {
 			return err
 		}
-		config.HostKeyCallback = kh.HostKeyCallback()
-		config.HostKeyAlgorithms = kh.HostKeyAlgorithms(hostWithPort)
+		config.HostKeyCallback = db.HostKeyCallback()
+		config.HostKeyAlgorithms = db.HostKeyAlgorithms(hostWithPort)
 	} else if len(config.HostKeyAlgorithms) == 0 {
-		// Set the HostKeyAlgorithms based on HostKeyCallback.
-		// For background see https://github.com/go-git/go-git/issues/411 as well as
-		// https://github.com/golang/go/issues/29286 for root cause.
-		config.HostKeyAlgorithms = knownhosts.HostKeyAlgorithms(config.HostKeyCallback, hostWithPort)
+		if db, err := newKnownHostsDb(); err == nil {
+			// Note that the knownhost database is used, as it provides additional functionality
+			// to handle ssh cert-authorities.
+			config.HostKeyAlgorithms = db.FilteredHostKeyAlgorithms(hostWithPort, func(key knownhosts.PublicKey) bool {
+				placeholderAddr := &net.TCPAddr{IP: []byte{0, 0, 0, 0}}
+				return config.HostKeyCallback(hostWithPort, placeholderAddr, key) == nil
+			})
+			fmt.Println("algos: ", strings.Join(config.HostKeyAlgorithms, ", "))
+		} else {
+			// Fallback to using the older HostKeyAlgorithms method of knownhosts, which
+			// does not support cert-authorities
+
+			// Set the HostKeyAlgorithms based on HostKeyCallback.
+			// For background see https://github.com/go-git/go-git/issues/411 as well as
+			// https://github.com/golang/go/issues/29286 for root cause.
+			config.HostKeyAlgorithms = knownhosts.HostKeyAlgorithms(config.HostKeyCallback, hostWithPort)
+			fmt.Println("fallback algos: ", strings.Join(config.HostKeyAlgorithms, ", "))
+		}
 	}
 
 	overrideConfig(c.config, config)
