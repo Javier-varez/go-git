@@ -26,6 +26,14 @@ type AuthMethod interface {
 	ClientConfig() (*ssh.ClientConfig, error)
 }
 
+type KnownHostsBasedAuthMethod interface {
+	AuthMethod
+
+	// HostKeyDB returns the HostKeyDB used to populate the HostKeyCallback. May be used
+	// to determine the supported host key algorithms.
+	HostKeyDB() (*knownhosts.HostKeyDB, error)
+}
+
 // The names of the AuthMethod implementations. To be returned by the
 // Name() method. Most git servers only allow PublicKeysName and
 // PublicKeysCallbackName.
@@ -230,11 +238,23 @@ func (a *PublicKeysCallback) ClientConfig() (*ssh.ClientConfig, error) {
 //	~/.ssh/known_hosts
 //	/etc/ssh/ssh_known_hosts
 func NewKnownHostsCallback(files ...string) (ssh.HostKeyCallback, error) {
-	kh, err := newKnownHosts(files...)
-	return ssh.HostKeyCallback(kh), err
+	kh, err := NewKnownHostsDb(files...)
+	return kh.HostKeyCallback(), err
 }
 
-func newKnownHosts(files ...string) (knownhosts.HostKeyCallback, error) {
+// NewKnownHostsDb returns knownhosts.HostKeyDB based on a file based on a
+// known_hosts file. http://man.openbsd.org/sshd#SSH_KNOWN_HOSTS_FILE_FORMAT
+//
+// If list of files is empty, then it will be read from the SSH_KNOWN_HOSTS
+// environment variable, example:
+//
+//	/home/foo/custom_known_hosts_file:/etc/custom_known/hosts_file
+//
+// If SSH_KNOWN_HOSTS is not set the following file locations will be used:
+//
+//	~/.ssh/known_hosts
+//	/etc/ssh/ssh_known_hosts
+func NewKnownHostsDb(files ...string) (*knownhosts.HostKeyDB, error) {
 	var err error
 
 	if len(files) == 0 {
@@ -247,7 +267,7 @@ func newKnownHosts(files ...string) (knownhosts.HostKeyCallback, error) {
 		return nil, err
 	}
 
-	return knownhosts.New(files...)
+	return knownhosts.NewDB(files...)
 }
 
 func getDefaultKnownHostsFiles() ([]string, error) {
@@ -292,20 +312,44 @@ func filterKnownHostsFiles(files ...string) ([]string, error) {
 // configure HostKeyCallback into a ssh.ClientConfig.
 type HostKeyCallbackHelper struct {
 	// HostKeyCallback is the function type used for verifying server keys.
-	// If nil default callback will be create using NewKnownHostsCallback
+	// If nil default callback will be create using NewKnownHostsDb
 	// without argument.
 	HostKeyCallback ssh.HostKeyCallback
+
+	// The known host database that can be used to obtain the list of supported
+	// host key algorithms. May be nil. If present, it will be used to list
+	// supported host key algorithms if no HostKeyAlgorithms were given.
+	HostKeyDatabase *knownhosts.HostKeyDB
+}
+
+func (m *HostKeyCallbackHelper) populate() error {
+	if m.HostKeyCallback != nil {
+		return nil
+	}
+
+	db, err := NewKnownHostsDb()
+	if err != nil {
+		return err
+	}
+	m.HostKeyDatabase = db
+	m.HostKeyCallback = m.HostKeyDatabase.HostKeyCallback()
+	return nil
+}
+
+func (m *HostKeyCallbackHelper) HostKeyDB() (*knownhosts.HostKeyDB, error) {
+	if err := m.populate(); err != nil {
+		return nil, err
+	}
+
+	return m.HostKeyDatabase, nil
 }
 
 // SetHostKeyCallback sets the field HostKeyCallback in the given cfg. If
 // HostKeyCallback is empty a default callback is created using
-// NewKnownHostsCallback.
+// NewKnownHostsDb.
 func (m *HostKeyCallbackHelper) SetHostKeyCallback(cfg *ssh.ClientConfig) (*ssh.ClientConfig, error) {
-	var err error
-	if m.HostKeyCallback == nil {
-		if m.HostKeyCallback, err = NewKnownHostsCallback(); err != nil {
-			return cfg, err
-		}
+	if err := m.populate(); err != nil {
+		return cfg, err
 	}
 
 	cfg.HostKeyCallback = m.HostKeyCallback

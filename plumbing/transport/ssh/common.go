@@ -127,17 +127,27 @@ func (c *command) connect() error {
 	}
 	hostWithPort := c.getHostWithPort()
 	if config.HostKeyCallback == nil {
-		kh, err := newKnownHosts()
+		db, err := NewKnownHostsDb()
 		if err != nil {
 			return err
 		}
-		config.HostKeyCallback = kh.HostKeyCallback()
-		config.HostKeyAlgorithms = kh.HostKeyAlgorithms(hostWithPort)
+		config.HostKeyCallback = db.HostKeyCallback()
+		config.HostKeyAlgorithms = db.HostKeyAlgorithms(hostWithPort)
 	} else if len(config.HostKeyAlgorithms) == 0 {
-		// Set the HostKeyAlgorithms based on HostKeyCallback.
-		// For background see https://github.com/go-git/go-git/issues/411 as well as
-		// https://github.com/golang/go/issues/29286 for root cause.
-		config.HostKeyAlgorithms = knownhosts.HostKeyAlgorithms(config.HostKeyCallback, hostWithPort)
+		if hkAuthMethod, ok := c.auth.(KnownHostsBasedAuthMethod); ok {
+			if db, err := hkAuthMethod.HostKeyDB(); err == nil && db != nil {
+				config.HostKeyAlgorithms = db.HostKeyAlgorithms(hostWithPort)
+				fmt.Println("Host key db used! ", strings.Join(config.HostKeyAlgorithms, ", "))
+			}
+		}
+
+		// Fallback to simpler method without the host key database
+		if len(config.HostKeyAlgorithms) == 0 {
+			// Set the HostKeyAlgorithms based on HostKeyCallback.
+			// For background see https://github.com/go-git/go-git/issues/411 as well as
+			// https://github.com/golang/go/issues/29286 for root cause.
+			config.HostKeyAlgorithms = knownhosts.HostKeyAlgorithms(config.HostKeyCallback, hostWithPort)
+		}
 	}
 
 	overrideConfig(c.config, config)
